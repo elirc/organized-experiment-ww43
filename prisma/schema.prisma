@@ -1,0 +1,138 @@
+// This schema defines the production data boundaries for authentication, note access,
+// version history, collaborator permissions, and audit logging.
+// It is used by repositories in src/repositories/*.ts and generated into Prisma Client.
+// A junior engineer often gets implicit authorization wrong by modeling note sharing
+// without a join table, which makes permission rules hard to query and easy to bypass.
+//
+// ⚠️ SENIOR NOTE: Note access is intentionally represented in NoteCollaborator as a
+// first-class relation so every future query can scope by membership instead of trying
+// to infer access from multiple optional fields.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SystemRole {
+  APP_ADMIN
+  MEMBER
+}
+
+enum NotePermission {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+enum NoteStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum AuditAction {
+  LOGIN_SUCCEEDED
+  LOGIN_FAILED
+  LOGOUT
+  NOTE_CREATED
+  NOTE_UPDATED
+  NOTE_CONFLICT_REJECTED
+  NOTE_STATUS_CHANGED
+  NOTE_COLLABORATOR_UPSERTED
+}
+
+model User {
+  id                String             @id @default(cuid())
+  email             String             @unique
+  name              String
+  passwordHash      String
+  role              SystemRole         @default(MEMBER)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  ownedNotes        Note[]             @relation("OwnedNotes")
+  noteCollaborators NoteCollaborator[]
+  editedRevisions   NoteRevision[]     @relation("RevisionEditor")
+  sessions          Session[]
+  auditLogs         AuditLog[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Note {
+  id                   String             @id @default(cuid())
+  title                String
+  currentBody          String
+  currentVersionNumber Int                @default(1)
+  status               NoteStatus         @default(ACTIVE)
+  ownerId              String
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  lastEditedAt         DateTime           @default(now())
+  owner                User               @relation("OwnedNotes", fields: [ownerId], references: [id], onDelete: Cascade)
+  collaborators        NoteCollaborator[]
+  revisions            NoteRevision[]
+  auditLogs            AuditLog[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([updatedAt])
+}
+
+model NoteCollaborator {
+  id         String         @id @default(cuid())
+  noteId     String
+  userId     String
+  permission NotePermission
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  note       Note           @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, userId])
+  @@index([userId, permission])
+}
+
+model NoteRevision {
+  id            String   @id @default(cuid())
+  noteId        String
+  versionNumber Int
+  titleSnapshot String
+  bodySnapshot  String
+  changeSummary String?
+  editedById    String
+  createdAt     DateTime @default(now())
+  note          Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  editedBy      User     @relation("RevisionEditor", fields: [editedById], references: [id], onDelete: Restrict)
+
+  @@unique([noteId, versionNumber])
+  @@index([noteId, createdAt])
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  actorId   String?
+  noteId    String?
+  action    AuditAction
+  metadata  Json?
+  createdAt DateTime    @default(now())
+  actor     User?       @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  note      Note?       @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([actorId, createdAt])
+  @@index([noteId, createdAt])
+  @@index([action, createdAt])
+}

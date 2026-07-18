@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5efe5;
+  --panel: rgba(255, 255, 255, 0.74);
+  --panel-muted: #f5f0ea;
+  --foreground: #183643;
+  --ink-strong: #183643;
+  --ink-soft: #5f6d73;
+  --border: rgba(24, 54, 67, 0.12);
+  --border-strong: rgba(24, 54, 67, 0.24);
+  --accent-soft: #ffd8cb;
+  --accent-strong: #f2724c;
+  --accent-stronger: #dc5d38;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-manrope);
+  --font-mono: var(--font-plex-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background:
+    radial-gradient(circle at top right, rgba(242, 114, 76, 0.16), transparent 30%),
+    linear-gradient(180deg, #fbf6ee 0%, #f0e8dd 100%);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-manrope), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(242, 114, 76, 0.26);
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
