@@ -161,3 +161,38 @@ Reviewer focus:
 - `tests/repositories/note-repository.test.ts`: verify the scoping helper is tested directly.
 - `docs/learning/flow-traces.md`: verify traces name real functions and real files rather than hypothetical architecture.
 What a junior reviewer might approve without questioning: A client conflict handler that simply retries the save, causing repeated overwrite attempts instead of surfacing the newer version.
+
+## Review notes: what the slices shipped vs. what they claimed
+
+This section was added during a later documentation review. It checks each stage and slice above against the code as committed, and records what a reviewer of each slice would have caught. Finding numbers (F1-F13) refer to [../architecture/auth-and-permissions.md](../architecture/auth-and-permissions.md#findings).
+
+### Stage-by-stage
+
+| Stage | Claim | Holds? | Notes |
+| --- | --- | --- | --- |
+| 2 | Next.js App Router, TypeScript, React Query, Tailwind, Prisma, PostgreSQL, Zod, REST | yes | `package.json:15-41`; Next 16.2.4, React 19.2.4, Prisma 6, Zod 4, Tailwind 4 |
+| 3 | revisions are immutable snapshots | yes in practice | no code updates or deletes `NoteRevision`; the database does not enforce it |
+| 4 | hashed opaque tokens make logout and revocation real | yes for logout | no "revoke all sessions", no expired-row cleanup (F9) |
+| 5 | transactions live in services; Prisma query shapes live in repositories | mostly | `findAccessibleById()` cannot join a transaction (F2) |
+| 6 | draft state is local; server state is in React Query | yes | `notes-workspace.tsx:58-70`; see the conflict-recovery caveat in [flow-traces.md](flow-traces.md#notes-on-the-flows-above) |
+| 7 | focused tests for RBAC, validation, transitions, conflict detection, scoping | yes, narrowly | 7 tests; both service tests run as admin, so member permissions are untested ([testing-rationale.md](testing-rationale.md#what-each-test-proves-and-does-not-prove)) |
+
+### What each slice's reviewer could have caught
+
+- **Slice 1.** `onDelete: Cascade` on both `AuditLog` relations (`prisma/schema.prisma:132-133`) means the audit log does not survive user or note deletion (F11). The seed's `currentBody` does not match its own latest revision (`prisma/seed.ts:61-62` vs `:82-83`). There is no `prisma/migrations/` folder, so a fresh clone needs `prisma db push`.
+- **Slice 2.** `assertSystemRole()` was added but never wired (`src/lib/auth/permissions.ts:27-35`). `login()` skips bcrypt for unknown emails (`src/services/auth-service.ts:32`), a timing side channel (F8). The env default for `DATABASE_URL` does nothing (F10).
+- **Slice 3.** The "verify `updateNote()` rejects stale versions before or during the write path" focus was right, and both paths do reject. But the "during" path does not audit (F3), misreports archived notes (F4), and the success path re-reads outside the transaction (F2). `request.json()` failures become `500` (F1). Route header comments point at hook files that were never created (F13).
+- **Slice 4.** The `upsertCollaborator()` focus ("blocks non-owners and preserves owner permission") holds for `Note.ownerId` only. Any co-owner passes the non-owner check (F6). There is no way to remove a collaborator (F7). `updateStatus()` rejects same-state transitions as claimed, but with a read-then-write that two concurrent calls can both pass (F5).
+- **Slice 5.** "Conflict recovery reads `details.latestNote`" holds (`notes-workspace.tsx:212-213`). The `ConflictPayload` type in `src/types/note.ts:74-81` describes a different, flat shape and is unused.
+
+### Decision log addendum
+
+#### Decision: Validation failures are 422, not 400
+Why it matters: clients and API gateways often treat 400 and 422 differently.
+What the code does: `parseSchema()` throws `422 VALIDATION_ERROR` with Zod's flattened errors in `details` (`src/lib/validation/parse-schema.ts:11-23`). Nothing in the app returns 400.
+Tradeoff: 422 is a reasonable choice for "well-formed but semantically invalid". It leaves no code for "not well-formed at all", and today that case falls through to 500 (F1). A complete contract would use 400 for unparseable JSON and 422 for schema failures.
+
+#### Decision: Admins bypass note scoping instead of holding collaborator rows
+Why it matters: it decides whether admin access is visible in the data or only in code.
+What the code does: `buildAccessibleNoteWhere()` returns no collaborator filter for `APP_ADMIN` (`src/repositories/note-repository.ts:23-25`), and `getNoteAccessLevel()` gives admins `OWNER` capabilities (`src/lib/auth/permissions.ts:41-50`). Admins can edit, share, and archive any note. Their actions are audited under their own `actorId`.
+Tradeoff: simple and centralized, but an admin's access to a note never shows in its collaborator panel, and "who can see this note?" cannot be answered from `NoteCollaborator` alone.
